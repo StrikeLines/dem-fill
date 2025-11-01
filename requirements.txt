@@ -1,0 +1,30 @@
+# Core scientific packages
+numpy
+pandas
+scipy
+matplotlib
+tqdm
+scikit-image
+pillow
+
+# Geospatial packages
+rasterio
+# GDAL - requires system-level dependencies, install separately:
+# Ubuntu/Debian: sudo apt-get install gdal-bin libgdal-dev
+# Then: pip install GDAL==$(gdal-config --version)
+# Or use: pip install --no-build-isolation GDAL
+
+# Computer vision
+opencv-python
+
+# Machine learning and utilities
+albumentations
+tensorboard
+pytorch-lightning
+
+# PyTorch ecosystem (CUDA 12.8 compatible)
+# Note: Install these separately with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# Or uncomment the lines below for CPU-only versions:
+# torch==2.5.*
+# torchvision
+# torchaudio

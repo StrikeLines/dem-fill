@@ -1,0 +1,15 @@
+on Windows
+python run.py -p test -c config/dem_completion.json ^
+--resume_state ./pretrained/760 ^
+--n_timestep 512 ^
+--input_img "dataset\bath\tiles_256\tiles\tile_0014.tif" ^
+--tile_size 128 ^
+--tile_overlap 0 ^
+
+on Linux
+python run.py -p test -c config/dem_completion.json \
+--resume_state ./pretrained/760 \
+--n_timestep 512 \
+--input_img "dataset/bath/tiles_256/tiles/tile_0014.tif" \
+--tile_size 128 \
+--tile_overlap 0

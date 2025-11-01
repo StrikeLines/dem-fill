@@ -1,0 +1,28 @@
+name: Diff-DEM
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - tqdm
+  - scikit-image
+  - rasterio
+  - gdal
+  - opencv
+  - pip
+  - pytorch=2.5.*
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.4
+  - pip:
+      - albumentations
+      - tqdm
+      - pillow
+      - tensorboard
+      - lightning
