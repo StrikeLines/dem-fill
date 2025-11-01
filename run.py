@@ -106,7 +106,9 @@ if __name__ == '__main__':
     parser.add_argument('--tile_overlap', default=0, help='Pixel overlap in tiles')
     parser.add_argument('--keep_temp', action='store_true', help='Keep temporary files after processing')
     parser.add_argument('--nodata_value', default=None, help='NoData value in the input image')
-    
+    parser.add_argument('--ddim_steps', type=int, default=50, help='Number of DDIM sampling steps (default: 50, faster than 1000 DDPM steps)')
+    parser.add_argument('--ddim_eta', type=float, default=0.0, help='DDIM eta parameter (0=deterministic, 1=DDPM-like stochastic)')
+    parser.add_argument('--use_ddpm', action='store_true', help='Use original DDPM sampling instead of DDIM (slower but might be more accurate)')
 
     ''' parser configs '''
     args = parser.parse_args()

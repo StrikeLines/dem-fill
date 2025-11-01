@@ -119,6 +119,8 @@
                         "test": {
                             "schedule": "linear",
                             "n_timestep": 1000,
+                            "ddim_steps": 50,
+                            "ddim_eta": 0.0,
                             "linear_start": 1e-4,
                             "linear_end": 0.09
                         }

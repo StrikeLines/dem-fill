@@ -21,7 +21,11 @@ class Network(BaseNetwork):
 
     def set_new_noise_schedule(self, device=torch.device('cuda'), phase='train'):
         to_torch = partial(torch.tensor, dtype=torch.float32, device=device)
-        betas = make_beta_schedule(**self.beta_schedule[phase])
+        
+        # Filter out DDIM-specific parameters before passing to make_beta_schedule
+        beta_schedule_params = {k: v for k, v in self.beta_schedule[phase].items()
+                               if k not in ['ddim_steps', 'ddim_eta']}
+        betas = make_beta_schedule(**beta_schedule_params)
         betas = betas.detach().cpu().numpy() if isinstance(
             betas, torch.Tensor) else betas
         alphas = 1. - betas
@@ -101,6 +105,93 @@ class Network(BaseNetwork):
             if sample_inter is not None and i % sample_inter == 0:
                 ret_arr = torch.cat([ret_arr, y_t], dim=0)
         return y_t, ret_arr
+
+    @torch.no_grad()
+    def ddim_restoration(self, y_cond, y_t=None, y_0=None, mask=None,
+                         ddim_steps=50, eta=0.0, sample_num=8):
+        """DDIM sampling that closely follows original DDPM structure"""
+        b, *_ = y_cond.shape
+
+        # Create DDIM timestep schedule that matches original training
+        assert self.num_timesteps % ddim_steps == 0 or ddim_steps >= self.num_timesteps, \
+            f"ddim_steps ({ddim_steps}) must divide num_timesteps ({self.num_timesteps}) or be >= num_timesteps"
+        
+        if ddim_steps >= self.num_timesteps:
+            # Use all timesteps (same as DDPM)
+            timesteps = list(range(self.num_timesteps))[::-1]
+            ddim_eta = 1.0  # Force stochastic sampling when using all steps
+        else:
+            # Subsample timesteps uniformly
+            skip = self.num_timesteps // ddim_steps
+            timesteps = list(range(self.num_timesteps - 1, -1, -skip))
+            if timesteps[-1] != 0:
+                timesteps.append(0)
+            ddim_eta = eta
+
+        assert self.num_timesteps > sample_num, 'num_timesteps must greater than sample_num'
+        sample_inter = None if sample_num == 0 else (len(timesteps) // sample_num)
+        
+        y_t = default(y_t, lambda: torch.randn_like(y_cond))
+        ret_arr = y_t
+        
+        for i, t in enumerate(timesteps):
+            t_tensor = torch.full((b,), t, device=y_cond.device, dtype=torch.long)
+            
+            if ddim_steps >= self.num_timesteps:
+                # Use original DDPM sampling (p_sample)
+                y_t = self.p_sample(y_t, t_tensor, y_cond=y_cond)
+            else:
+                # Use DDIM sampling
+                y_t = self.ddim_p_sample(y_t, t_tensor, timesteps, i, ddim_eta, y_cond=y_cond)
+            
+            # Apply mask for inpainting
+            if mask is not None:
+                y_t = y_0*(1.-mask) + mask*y_t
+                
+            # Store intermediates for visualization
+            if sample_inter is not None and i % sample_inter == 0:
+                ret_arr = torch.cat([ret_arr, y_t], dim=0)
+    
+        return y_t, ret_arr
+
+    @torch.no_grad()
+    def ddim_p_sample(self, y_t, t, timesteps, i, eta, y_cond=None):
+        """DDIM version of p_sample that uses existing p_mean_variance"""
+        # Use existing p_mean_variance to get x0 prediction and posterior mean
+        model_mean, model_log_variance = self.p_mean_variance(
+            y_t=y_t, t=t, clip_denoised=True, y_cond=y_cond)
+        
+        # Get x0 prediction (reverse the posterior calculation)
+        # model_mean = posterior_mean_coef1 * x0 + posterior_mean_coef2 * y_t
+        # Solve for x0: x0 = (model_mean - posterior_mean_coef2 * y_t) / posterior_mean_coef1
+        posterior_mean_coef1 = extract(self.posterior_mean_coef1, t, y_t.shape)
+        posterior_mean_coef2 = extract(self.posterior_mean_coef2, t, y_t.shape)
+        x0_pred = (model_mean - posterior_mean_coef2 * y_t) / posterior_mean_coef1
+        
+        # Get next timestep
+        if i < len(timesteps) - 1:
+            t_next = timesteps[i + 1]
+            t_next_tensor = torch.full(t.shape, t_next, device=t.device, dtype=t.dtype)
+            
+            # DDIM step
+            alpha_t = extract(self.gammas, t, x_shape=(1, 1, 1, 1))
+            alpha_next = extract(self.gammas, t_next_tensor, x_shape=(1, 1, 1, 1))
+            
+            # Compute DDIM variance
+            sigma_t = eta * torch.sqrt((1 - alpha_next) / (1 - alpha_t) * (1 - alpha_t / alpha_next))
+            
+            # Compute predicted noise
+            eps = (y_t - torch.sqrt(alpha_t) * x0_pred) / torch.sqrt(1 - alpha_t)
+            
+            # DDIM update
+            pred_dir = torch.sqrt(1 - alpha_next - sigma_t**2) * eps
+            noise = torch.randn_like(y_t) if eta > 0 else torch.zeros_like(y_t)
+            y_next = torch.sqrt(alpha_next) * x0_pred + pred_dir + sigma_t * noise
+            
+            return y_next
+        else:
+            # Final step - return x0 prediction
+            return x0_pred
 
     def forward(self, y_0, y_cond=None, mask=None, noise=None):
         # sampling from p(gammas)

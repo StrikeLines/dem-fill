@@ -189,18 +189,43 @@ class Palette(BaseModel):
                 else:
                     cond_image = self.cond_image
 
-                if self.opt['distributed']:
-                    if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.module.restoration(cond_image, y_t=self.cond_image, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                # Check if user wants to use original DDPM sampling
+                use_ddpm = self.opt.get('use_ddpm', False)
+                
+                if use_ddpm:
+                    # Use original DDPM sampling
+                    if self.opt['distributed']:
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.module.restoration(cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.module.restoration(cond_image, sample_num=self.sample_num)
                     else:
-                        self.output, self.visuals = self.netG.module.restoration(cond_image, sample_num=self.sample_num)
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.restoration(cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.restoration(cond_image, sample_num=self.sample_num)
                 else:
-                    if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.restoration(cond_image, y_t=self.cond_image, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                    # Use DDIM sampling (default for faster inference)
+                    # Get DDIM parameters from command line args, config, or defaults
+                    ddim_steps = self.opt.get('ddim_steps') or \
+                                getattr(self.opt.get('model', {}).get('which_networks', [{}])[0].get('args', {}).get('beta_schedule', {}).get('test', {}), 'ddim_steps', 50)
+                    ddim_eta = self.opt.get('ddim_eta') if self.opt.get('ddim_eta') is not None else \
+                               getattr(self.opt.get('model', {}).get('which_networks', [{}])[0].get('args', {}).get('beta_schedule', {}).get('test', {}), 'ddim_eta', 0.0)
+                    
+                    if self.opt['distributed']:
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.module.ddim_restoration(cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.module.ddim_restoration(cond_image, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
                     else:
-                        self.output, self.visuals = self.netG.restoration(cond_image, sample_num=self.sample_num)
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.ddim_restoration(cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.ddim_restoration(cond_image, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
                 
                 
                     
@@ -233,18 +258,43 @@ class Palette(BaseModel):
                 else:
                     cond_image = self.cond_image
 
-                if self.opt['distributed']:
-                    if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.module.restoration(cond_image, y_t=None,
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                # Check if user wants to use original DDPM sampling
+                use_ddpm = self.opt.get('use_ddpm', False)
+                
+                if use_ddpm:
+                    # Use original DDPM sampling
+                    if self.opt['distributed']:
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.module.restoration(cond_image, y_t=None,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.module.restoration(cond_image, sample_num=self.sample_num)
                     else:
-                        self.output, self.visuals = self.netG.module.restoration(cond_image, sample_num=self.sample_num)
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.restoration(cond_image, y_t=None,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.restoration(cond_image, sample_num=self.sample_num)
                 else:
-                    if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.restoration(cond_image, y_t=None, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                    # Use DDIM sampling (default for faster inference)
+                    # Get DDIM parameters from command line args, config, or defaults
+                    ddim_steps = self.opt.get('ddim_steps') or \
+                                getattr(self.opt.get('model', {}).get('which_networks', [{}])[0].get('args', {}).get('beta_schedule', {}).get('test', {}), 'ddim_steps', 50)
+                    ddim_eta = self.opt.get('ddim_eta') if self.opt.get('ddim_eta') is not None else \
+                               getattr(self.opt.get('model', {}).get('which_networks', [{}])[0].get('args', {}).get('beta_schedule', {}).get('test', {}), 'ddim_eta', 0.0)
+                    
+                    if self.opt['distributed']:
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.module.ddim_restoration(cond_image, y_t=None,
+                                y_0=self.gt_image, mask=self.mask, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.module.ddim_restoration(cond_image, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
                     else:
-                        self.output, self.visuals = self.netG.restoration(cond_image, sample_num=self.sample_num)
+                        if self.task in ['inpainting','uncropping']:
+                            self.output, self.visuals = self.netG.ddim_restoration(cond_image, y_t=None,
+                                y_0=self.gt_image, mask=self.mask, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
+                        else:
+                            self.output, self.visuals = self.netG.ddim_restoration(cond_image, ddim_steps=ddim_steps, eta=ddim_eta, sample_num=self.sample_num)
                 
                 
                 # #Changed here! print added
