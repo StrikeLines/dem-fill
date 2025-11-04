@@ -663,8 +663,17 @@ def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val
     """
     if scaleFactor is not None:
         if isinstance(scaleFactor, list):
-            # Convert list of tensors to floats and invert (e.g., 0.5 -> 2.0)
-            scaleFactor = tuple(1.0 / float(x.item() if isinstance(x, torch.Tensor) and x.numel() == 1 else x) for x in scaleFactor)
+            # Convert list of tensors/values to floats and invert (e.g., 0.5 -> 2.0)
+            def safe_convert(x):
+                if isinstance(x, torch.Tensor):
+                    if x.numel() == 1:
+                        return 1.0 / float(x.item())
+                    else:
+                        # For multi-element tensor, use the first element
+                        return 1.0 / float(x.flatten()[0].item())
+                else:
+                    return 1.0 / float(x)
+            scaleFactor = tuple(safe_convert(x) for x in scaleFactor)
         elif isinstance(scaleFactor, tuple):
             scaleFactor = tuple(1.0 / float(x) for x in scaleFactor)
         elif isinstance(scaleFactor, torch.Tensor):
@@ -672,8 +681,11 @@ def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val
             if scaleFactor.numel() == 1:
                 scaleFactor = 1.0 / float(scaleFactor.item())
             else:
-                # For batch processing, take the first element or handle appropriately
-                scaleFactor = tuple(1.0 / float(scaleFactor[i].item()) for i in range(scaleFactor.size(0)))
+                # For batch processing, extract individual elements
+                scaleFactor = tuple(1.0 / float(scaleFactor[i].item()) for i in range(min(scaleFactor.size(0), len(images))))
+        else:
+            # Handle numeric types
+            scaleFactor = 1.0 / float(scaleFactor)
 
         # Handle batch processing with scaleFactor
         results = []
