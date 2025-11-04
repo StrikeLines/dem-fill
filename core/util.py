@@ -664,33 +664,50 @@ def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val
     if scaleFactor is not None:
         if isinstance(scaleFactor, list):
             # Convert list of tensors to floats and invert (e.g., 0.5 -> 2.0)
-            scaleFactor = tuple(1.0 / float(x.item()) for x in scaleFactor)
+            scaleFactor = tuple(1.0 / float(x.item() if isinstance(x, torch.Tensor) and x.numel() == 1 else x) for x in scaleFactor)
         elif isinstance(scaleFactor, tuple):
             scaleFactor = tuple(1.0 / float(x) for x in scaleFactor)
         elif isinstance(scaleFactor, torch.Tensor):
-            scaleFactor = tuple(1.0 / float(x.item()) for x in scaleFactor)
+            # Handle both single element and multi-element tensors
+            if scaleFactor.numel() == 1:
+                scaleFactor = 1.0 / float(scaleFactor.item())
+            else:
+                # For batch processing, take the first element or handle appropriately
+                scaleFactor = tuple(1.0 / float(scaleFactor[i].item()) for i in range(scaleFactor.size(0)))
 
-        return [
-            tensor2img(
-                F.interpolate(image.unsqueeze(0), scale_factor=scaleFactor, mode='bicubic', align_corners=False).squeeze(0),
+        # Handle batch processing with scaleFactor
+        results = []
+        for i, image in enumerate(images):
+            # Use appropriate scaleFactor for each image in batch
+            if isinstance(scaleFactor, tuple) and len(scaleFactor) > i:
+                sf = scaleFactor[i]
+            elif isinstance(scaleFactor, (int, float)):
+                sf = scaleFactor
+            else:
+                sf = scaleFactor[0] if isinstance(scaleFactor, tuple) else scaleFactor
+            
+            processed_img = tensor2img(
+                F.interpolate(image.unsqueeze(0), scale_factor=sf, mode='bicubic', align_corners=False).squeeze(0),
                 out_type=out_type,
                 scale_factor=scale_factor,
-                min_val=min_val,
-                max_val=max_val
+                min_val=min_val[i] if isinstance(min_val, (list, tuple)) and len(min_val) > i else min_val,
+                max_val=max_val[i] if isinstance(max_val, (list, tuple)) and len(max_val) > i else max_val
             )
-            for image in images
-        ]
+            results.append(processed_img)
+        return results
     else:
-        return [
-            tensor2img(
+        # Handle batch processing without scaleFactor
+        results = []
+        for i, image in enumerate(images):
+            processed_img = tensor2img(
                 image,
                 out_type=out_type,
                 scale_factor=scale_factor,
-                min_val=min_val,
-                max_val=max_val
+                min_val=min_val[i] if isinstance(min_val, (list, tuple)) and len(min_val) > i else min_val,
+                max_val=max_val[i] if isinstance(max_val, (list, tuple)) and len(max_val) > i else max_val
             )
-            for image in images
-        ]
+            results.append(processed_img)
+        return results
 
 
 def set_seed(seed, gl_seed=0):
