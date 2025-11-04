@@ -12,19 +12,27 @@ It divides large georeferenced DEMs and their corresponding mask images into sma
 To run inference, you need:
 
 - ✅ An input DEM image (`--input_img`)
-- ✅ A binary mask image (`--input_mask`) where voids are marked Or will be created from input image
+- 🔄 A binary mask image (`--input_mask`) - **OPTIONAL** (will be auto-generated if not provided)
 - ✅ A pretrained model checkpoint (`--resume_state`)
 - ✅ Number of diffusion inference steps (`--n_timestep`, e.g. 512)
 - ✅ (Optional) Tile overlap in pixels (`--tile_overlap`) to reduce tiling artifacts
 
-**Example Command:**
+**Example Commands:**
 
 ```bash
+# With provided mask (traditional approach)
 python run.py -p test -c config/dem_completion.json \
   --resume_state ./pretrained/760 \
   --n_timestep 512 \
   --input_img "Path_to_Input_DEM.tif" \
   --input_mask "Path_to_Mask.tif" \
+  --tile_overlap 0
+
+# Without mask (auto-generation from nodata values)
+python run.py -p test -c config/dem_completion.json \
+  --resume_state ./pretrained/760 \
+  --n_timestep 512 \
+  --input_img "Path_to_Input_DEM.tif" \
   --tile_overlap 0
 ```
 
@@ -32,27 +40,31 @@ python run.py -p test -c config/dem_completion.json \
 
 ## 🧠 Internal Workflow
 
-1. **Temporary Directory Creation**  
+1. **Temporary Directory Creation**
    A temp folder is created to hold intermediate tiles and results.
 
-2. **Tiling**  
-   - Input DEM and mask are split into 128×128 tiles.  
-   - If `--tile_overlap` is provided (e.g., 64), tiles overlap with neighbors by that many pixels.  
+2. **🆕 Preprocessing: Automatic Mask Generation** (NEW)
+   - If no `--input_mask` is provided, automatically generates nodata mask from input TIF
+   - Detects nodata values (defined nodata, NaN, infinity, extreme outliers)
+   - Creates binary mask (255=nodata, 0=valid data) for inpainting workflow
+   - Saves auto-generated mask to temporary directory
 
-3. **FList Creation**  
+3. **Tiling**
+   - Input DEM and mask are split into 128×128 tiles.
+   - If `--tile_overlap` is provided (e.g., 64), tiles overlap with neighbors by that many pixels.
+
+4. **FList Creation**
    Tile paths are written into `.flist` files and fed to the model.
 
-4. **Model Inference**  
-   - Model input remains **128×128**, regardless of overlap.  
+5. **Model Inference**
+   - Model input remains **128×128**, regardless of overlap.
    - With overlap, each pixel may be predicted multiple times (e.g., 50% overlap → predicted 3+ times).
    - Tiles values are converted into -1 to 1 ranges for model input/inference.
    - Tile's min_max values are saved using which the predicted images pixel values are scaled back to original 32bit dem pixel values.
 
-
-
-5. **Output Stitching**  
-   - Predicted tiles are merged back into a full DEM.  
-   - Overlapping predictions are averaged, producing smooth transitions.  
+6. **Output Stitching**
+   - Predicted tiles are merged back into a full DEM.
+   - Overlapping predictions are averaged, producing smooth transitions.
    - Original georeferencing and metadata are preserved.
 
 ---
@@ -108,7 +120,7 @@ python run.py -p test -c config/dem_completion.json \
 | -b, --batch | Batch size (per GPU, under development) |
 | --resume_state | Path to model checkpoint |
 | --input_img | Input DEM (GeoTIFF) |
-| --input_mask | Binary mask image |
+| --input_mask | 🆕 **OPTIONAL** Binary mask image (auto-generated if not provided) |
 | --tile_overlap | Overlap in pixels for tiling (default: 0) |
 | --nodata_value | Value treated as NoData in input image for mask creation |
 | --scale_factor | Rescale output (default: 1) |
@@ -141,11 +153,19 @@ python run.py -p test -c config/dem_completion.json \
 ### Large Single Image Mode (With Tiling)
 
 ```bash
+# With provided mask
 python run.py -p test -c config/dem_completion.json \
   --resume_state ./pretrained/760 \
   --n_timestep 512 \
   --input_img "Input_DEM.tif" \
   --input_mask "Input_Mask.tif" \
+  --tile_overlap 64
+
+# 🆕 Without mask (auto-generated)
+python run.py -p test -c config/dem_completion.json \
+  --resume_state ./pretrained/760 \
+  --n_timestep 512 \
+  --input_img "Input_DEM.tif" \
   --tile_overlap 64
 ```
 

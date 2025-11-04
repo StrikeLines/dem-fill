@@ -10,6 +10,8 @@ from data import define_dataloader
 from models import create_model, define_network, define_loss, define_metric
 from datetime import datetime
 import os
+import rasterio
+import numpy as np
 
 torch.cuda.empty_cache()
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -81,6 +83,114 @@ def cleanup_temp_dir(temp_dir: str) -> None:
         shutil.rmtree(temp_dir)
         print(f"Cleaned up temporary directory: {temp_dir}")
 
+
+def create_nodata_mask(input_file, output_file=None, mask_value_nodata=255, mask_value_data=0):
+    """
+    Create a nodata mask from a TIF file.
+    
+    Args:
+        input_file (str): Path to input TIF file
+        output_file (str): Path to output mask file (optional)
+        mask_value_nodata (int): Value to assign to nodata pixels in mask (default: 255)
+        mask_value_data (int): Value to assign to valid data pixels in mask (default: 0)
+    
+    Returns:
+        str: Path to the created mask file
+    """
+    
+    # Generate output filename if not provided
+    if output_file is None:
+        base_name = os.path.splitext(input_file)[0]
+        output_file = f"{base_name}_nodata_mask.tif"
+    
+    print(f"Creating nodata mask for: {input_file}")
+    print(f"Output mask will be saved as: {output_file}")
+    
+    # Open the input file
+    with rasterio.open(input_file) as src:
+        print(f"Input file info:")
+        print(f"  - Dimensions: {src.width} x {src.height}")
+        print(f"  - Bands: {src.count}")
+        print(f"  - Data type: {src.dtypes[0]}")
+        print(f"  - NoData value: {src.nodata}")
+        
+        # Read all bands (though we'll process band by band)
+        masks = []
+        
+        for band_idx in range(1, src.count + 1):
+            print(f"Processing band {band_idx}...")
+            
+            # Read the band data
+            data = src.read(band_idx)
+            
+            # Create the nodata mask
+            if src.nodata is not None:
+                # Use the defined nodata value
+                nodata_mask = (data == src.nodata)
+                print(f"  - Using defined nodata value: {src.nodata}")
+            else:
+                # If no nodata value is defined, try to detect common patterns
+                print("  - No nodata value defined, attempting to detect...")
+                
+                # Common nodata patterns to check
+                potential_nodata = [
+                    data == -99999.0,
+                    data == -9999.0,
+                    data == -999.0,
+                    np.isnan(data),
+                    np.isinf(data)
+                ]
+                
+                # Combine all potential nodata masks
+                nodata_mask = np.logical_or.reduce(potential_nodata)
+                
+                # Also check for extreme outliers (very large or very small values)
+                if data.dtype in [np.float32, np.float64]:
+                    data_finite = data[np.isfinite(data)]
+                    if len(data_finite) > 0:
+                        q1, q99 = np.percentile(data_finite, [1, 99])
+                        data_range = q99 - q1
+                        outlier_threshold = 100 * data_range  # 100x the data range
+                        
+                        extreme_outliers = (
+                            (data < (q1 - outlier_threshold)) |
+                            (data > (q99 + outlier_threshold))
+                        )
+                        nodata_mask = nodata_mask | extreme_outliers
+            
+            # Convert boolean mask to integer values
+            mask = np.where(nodata_mask, mask_value_nodata, mask_value_data).astype(np.uint8)
+            masks.append(mask)
+            
+            # Print statistics
+            nodata_count = np.sum(nodata_mask)
+            valid_count = np.sum(~nodata_mask)
+            total_pixels = mask.size
+            nodata_percentage = (nodata_count / total_pixels) * 100
+            
+            print(f"  - Total pixels: {total_pixels:,}")
+            print(f"  - NoData pixels: {nodata_count:,} ({nodata_percentage:.2f}%)")
+            print(f"  - Valid data pixels: {valid_count:,} ({100-nodata_percentage:.2f}%)")
+        
+        # Prepare the profile for the output file
+        profile = src.profile.copy()
+        profile.update({
+            'dtype': 'uint8',
+            'nodata': None,  # Mask files typically don't have nodata values
+            'compress': 'lzw'  # Add compression to save space
+        })
+        
+        # Write the mask file
+        print(f"\nWriting mask to: {output_file}")
+        with rasterio.open(output_file, 'w', **profile) as dst:
+            for band_idx, mask in enumerate(masks, 1):
+                dst.write(mask, band_idx)
+        
+        print(f"Nodata mask created successfully!")
+        print(f"Mask file saved as: {output_file}")
+        
+        return output_file
+
         
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -101,7 +211,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_timestep', type=int, default=None)
     parser.add_argument('--sample_num', type=int, default=0)
     parser.add_argument('--input_img', default=None, help='Path to input GeoTIFF image')
-    parser.add_argument('--input_mask', default=None, help='Path to input mask image')
+    parser.add_argument('--input_mask', default=None, help='Path to input mask image (optional - will be auto-generated if not provided)')
     parser.add_argument('--tile_size', default=128, help='Tile size in pixels defualts to 128')
     parser.add_argument('--tile_overlap', default=0, help='Pixel overlap in tiles')
     parser.add_argument('--keep_temp', action='store_true', help='Keep temporary files after processing')
@@ -128,16 +238,47 @@ if __name__ == '__main__':
         masks_dir = os.path.join(temp_dir, "masks")
         print(f"Created temporary directory: {temp_dir}")
         
+        # Check if mask is provided, if not create one automatically
+        if not opt.get('input_mask') or not os.path.exists(opt.get('input_mask', '')):
+            print("\n" + "─" * 40)
+            print("PREPROCESSING: CREATING NODATA MASK")
+            print("─" * 40)
+            
+            # Generate mask filename in temp directory
+            input_basename = os.path.basename(opt['input_img'])
+            mask_filename = os.path.splitext(input_basename)[0] + "_auto_nodata_mask.tif"
+            auto_mask_path = os.path.join(temp_dir, mask_filename)
+            
+            try:
+                # Create the nodata mask automatically
+                created_mask_path = create_nodata_mask(
+                    opt['input_img'],
+                    auto_mask_path,
+                    mask_value_nodata=255,  # Standard mask value for nodata
+                    mask_value_data=0       # Standard mask value for valid data
+                )
+                
+                # Set the mask path for the workflow
+                opt['input_mask'] = created_mask_path
+                print(f"✓ Auto-generated mask will be used: {created_mask_path}")
+                
+            except Exception as e:
+                print(f"Error creating automatic nodata mask: {str(e)}")
+                print("Proceeding without mask - will generate from nodata values during tiling")
+                opt['input_mask'] = None
+        else:
+            print(f"Using provided mask: {opt['input_mask']}")
+        
         # Initialize tilers
         tile_overlap = opt.get('tile_overlap',0)
         tile_size = opt.get('tile_size',128)
         try:
-            if not opt.get('input_mask') or not os.path.exists(opt['input_mask']):
+            if not opt.get('input_mask') or not os.path.exists(opt.get('input_mask', '')):
                 tiler = Util.GeoTiffTiler(tile_size=tile_size, overlap=tile_overlap)
                 
-                # Tile the input image
+                # Tile the input image and auto-generate mask from nodata
                 print("\n" + "─" * 40)
-                print("Tiling input image and mask")
+                print("Tiling input image and generating mask from nodata")
                 print("─" * 40)
                 img_metadata, mask_metadata = tiler.tile_image_with_mask(opt['input_img'],
                             tiles_dir,
