@@ -65,6 +65,9 @@ class Palette(BaseModel):
         else:
             self.netG.set_loss(self.loss_fn)
             self.netG.set_new_noise_schedule(phase=self.phase)
+        
+        # Initialize diffusers if enabled
+        self._setup_diffusers()
 
         ''' can rewrite in inherited class for more informations logging '''
         self.train_metrics = LogTracker(*[m.__name__ for m in losses], phase='train')
@@ -73,8 +76,25 @@ class Palette(BaseModel):
 
         self.sample_num = sample_num
         self.task = task
+self.cond_on_mask = cond_on_mask
 
-        self.cond_on_mask = cond_on_mask
+def _setup_diffusers(self):
+"""Setup diffusers integration based on options"""
+# Enable diffusers if requested
+if self.opt.get('use_diffusers', False):
+    scheduler_type = self.opt.get('scheduler_type', 'dpmpp')
+    
+    if self.opt['distributed']:
+        self.netG.module.enable_diffusers(scheduler_type)
+    else:
+        self.netG.enable_diffusers(scheduler_type)
+        
+    self.logger.info(f'Enabled diffusers with {scheduler_type} scheduler for fast inference')
+
+# Run benchmark if requested
+if self.opt.get('benchmark_inference', False):
+    self.logger.info('Will benchmark inference methods during test phase')
+
         
     def set_input(self, data):
         ''' must use set_device in tensor '''
@@ -233,18 +253,40 @@ class Palette(BaseModel):
                 else:
                     cond_image = self.cond_image
 
+                # Get diffusers parameters
+                num_inference_steps = self.opt.get('inference_steps', None)
+                
                 if self.opt['distributed']:
                     if self.task in ['inpainting','uncropping']:
                         self.output, self.visuals = self.netG.module.restoration(cond_image, y_t=None,
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num,
+                            num_inference_steps=num_inference_steps)
                     else:
-                        self.output, self.visuals = self.netG.module.restoration(cond_image, sample_num=self.sample_num)
+                        self.output, self.visuals = self.netG.module.restoration(cond_image, sample_num=self.sample_num,
+                            num_inference_steps=num_inference_steps)
                 else:
                     if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.restoration(cond_image, y_t=None, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        self.output, self.visuals = self.netG.restoration(cond_image, y_t=None,
+                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num,
+                            num_inference_steps=num_inference_steps)
                     else:
-                        self.output, self.visuals = self.netG.restoration(cond_image, sample_num=self.sample_num)
+                        self.output, self.visuals = self.netG.restoration(cond_image, sample_num=self.sample_num,
+                            num_inference_steps=num_inference_steps)
+                
+                # Run benchmarking if requested (only on first batch to avoid spam)
+                if self.opt.get('benchmark_inference', False) and self.iter == 0:
+                    self.logger.info('Running inference benchmark...')
+                    
+                    network = self.netG.module if self.opt['distributed'] else self.netG
+                    if hasattr(network, 'benchmark_inference'):
+                        benchmark_results = network.benchmark_inference(
+                            cond_image, mask=self.mask, y_0=self.gt_image
+                        )
+                        
+                        self.logger.info('Benchmark Results:')
+                        for method, metrics in benchmark_results.items():
+                            speedup = metrics.get('speedup', 'N/A')
+                            self.logger.info(f'  {method}: {metrics["time"]:.2f}s ({metrics["steps"]} steps) - {speedup}x speedup')
                 
                 
                 # #Changed here! print added

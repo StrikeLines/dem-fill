@@ -22,6 +22,10 @@ albumentations
 tensorboard
 pytorch-lightning
 
+# Diffusion models
+diffusers>=0.24.0
+accelerate
+
 # PyTorch ecosystem (CUDA 12.8 compatible)
 # Note: Install these separately with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 # Or uncomment the lines below for CPU-only versions:
