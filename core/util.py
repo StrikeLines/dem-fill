@@ -602,6 +602,7 @@ class GeoTiffTiler:
 def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_val=None, max_val=None):
     '''
     Converts a torch Tensor into an image Numpy array.
+    Simplified version for consistent tile processing to prevent edge artifacts.
     
     Input:
         - tensor: torch.Tensor (4D, 3D, or 2D)
@@ -635,7 +636,7 @@ def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_v
     img_np = (img_np - min_max[0]) / (min_max[1] - min_max[0])
     img_np = np.clip(img_np, 0, 1)
 
-    # Optional full denormalization using original DEM min and max
+    # Simplified tensor handling to ensure consistency across tiles
     if min_val is not None and max_val is not None:
         if isinstance(min_val, torch.Tensor):
             min_val = min_val.item()
@@ -656,70 +657,57 @@ def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_v
 
     return img_np.astype(out_type).squeeze()
 
-##Changed Here! added min_val and max_val args
+##Changed Here! Fixed scaling artifacts by using consistent processing for all tiles
 def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val=None, scaleFactor=None):
     """
-    Post-process model outputs, including optional upscaling based on inverse of scaleFactor.
+    Post-process model outputs with consistent scaling to prevent tile edge artifacts.
+    Uses uniform processing for all tiles to ensure proper averaging during reconstruction.
     """
     if scaleFactor is not None:
         if isinstance(scaleFactor, list):
-            # Convert list of tensors/values to floats and invert (e.g., 0.5 -> 2.0)
-            def safe_convert(x):
-                if isinstance(x, torch.Tensor):
-                    if x.numel() == 1:
-                        return 1.0 / float(x.item())
-                    else:
-                        # For multi-element tensor, use the first element
-                        return 1.0 / float(x.flatten()[0].item())
-                else:
-                    return 1.0 / float(x)
-            scaleFactor = tuple(safe_convert(x) for x in scaleFactor)
+            # Convert list of tensors to floats and invert (e.g., 0.5 -> 2.0)
+            # Use first element to ensure consistent scaling across all tiles
+            first_val = scaleFactor[0]
+            if isinstance(first_val, torch.Tensor):
+                scaleFactor = 1.0 / float(first_val.item())
+            else:
+                scaleFactor = 1.0 / float(first_val)
         elif isinstance(scaleFactor, tuple):
-            scaleFactor = tuple(1.0 / float(x) for x in scaleFactor)
+            # Use first element to ensure consistent scaling across all tiles
+            scaleFactor = 1.0 / float(scaleFactor[0])
         elif isinstance(scaleFactor, torch.Tensor):
-            # Handle both single element and multi-element tensors
+            # Use first element or single value to ensure consistent scaling
             if scaleFactor.numel() == 1:
                 scaleFactor = 1.0 / float(scaleFactor.item())
             else:
-                # For batch processing, extract individual elements
-                scaleFactor = tuple(1.0 / float(scaleFactor[i].item()) for i in range(min(scaleFactor.size(0), len(images))))
+                scaleFactor = 1.0 / float(scaleFactor.flatten()[0].item())
         else:
             # Handle numeric types
             scaleFactor = 1.0 / float(scaleFactor)
 
-        # Handle batch processing with scaleFactor
-        results = []
-        for i, image in enumerate(images):
-            # Use appropriate scaleFactor for each image in batch
-            if isinstance(scaleFactor, tuple) and len(scaleFactor) > i:
-                sf = scaleFactor[i]
-            elif isinstance(scaleFactor, (int, float)):
-                sf = scaleFactor
-            else:
-                sf = scaleFactor[0] if isinstance(scaleFactor, tuple) else scaleFactor
-            
-            processed_img = tensor2img(
-                F.interpolate(image.unsqueeze(0), scale_factor=sf, mode='bicubic', align_corners=False).squeeze(0),
+        # Apply SAME scaleFactor to ALL tiles to maintain consistency
+        return [
+            tensor2img(
+                F.interpolate(image.unsqueeze(0), scale_factor=scaleFactor, mode='bicubic', align_corners=False).squeeze(0),
                 out_type=out_type,
                 scale_factor=scale_factor,
-                min_val=min_val[i] if isinstance(min_val, (list, tuple)) and len(min_val) > i else min_val,
-                max_val=max_val[i] if isinstance(max_val, (list, tuple)) and len(max_val) > i else max_val
+                min_val=min_val,
+                max_val=max_val
             )
-            results.append(processed_img)
-        return results
+            for image in images
+        ]
     else:
-        # Handle batch processing without scaleFactor
-        results = []
-        for i, image in enumerate(images):
-            processed_img = tensor2img(
+        # Apply SAME processing to ALL tiles to maintain consistency
+        return [
+            tensor2img(
                 image,
                 out_type=out_type,
                 scale_factor=scale_factor,
-                min_val=min_val[i] if isinstance(min_val, (list, tuple)) and len(min_val) > i else min_val,
-                max_val=max_val[i] if isinstance(max_val, (list, tuple)) and len(max_val) > i else max_val
+                min_val=min_val,
+                max_val=max_val
             )
-            results.append(processed_img)
-        return results
+            for image in images
+        ]
 
 
 def set_seed(seed, gl_seed=0):
