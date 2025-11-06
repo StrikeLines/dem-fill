@@ -76,24 +76,24 @@ class Palette(BaseModel):
 
         self.sample_num = sample_num
         self.task = task
-self.cond_on_mask = cond_on_mask
+        self.cond_on_mask = cond_on_mask
 
-def _setup_diffusers(self):
-"""Setup diffusers integration based on options"""
-# Enable diffusers if requested
-if self.opt.get('use_diffusers', False):
-    scheduler_type = self.opt.get('scheduler_type', 'dpmpp')
-    
-    if self.opt['distributed']:
-        self.netG.module.enable_diffusers(scheduler_type)
-    else:
-        self.netG.enable_diffusers(scheduler_type)
-        
-    self.logger.info(f'Enabled diffusers with {scheduler_type} scheduler for fast inference')
+    def _setup_diffusers(self):
+        """Setup diffusers integration based on options"""
+        # Enable diffusers if requested
+        if self.opt.get('use_diffusers', False):
+            scheduler_type = self.opt.get('scheduler_type', 'dpmpp')
+            
+            if self.opt['distributed']:
+                self.netG.module.enable_diffusers(scheduler_type)
+            else:
+                self.netG.enable_diffusers(scheduler_type)
+                
+            self.logger.info(f'Enabled diffusers with {scheduler_type} scheduler for fast inference')
 
-# Run benchmark if requested
-if self.opt.get('benchmark_inference', False):
-    self.logger.info('Will benchmark inference methods during test phase')
+        # Run benchmark if requested
+        if self.opt.get('benchmark_inference', False):
+            self.logger.info('Will benchmark inference methods during test phase')
 
         
     def set_input(self, data):
