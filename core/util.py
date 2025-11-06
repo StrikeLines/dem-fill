@@ -639,10 +639,18 @@ def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_v
     # Simplified tensor handling to ensure consistency across tiles
     if min_val is not None and max_val is not None:
         if isinstance(min_val, torch.Tensor):
-            min_val = min_val.item()
+            # Handle multi-element tensors by taking the first scalar value
+            if min_val.numel() == 1:
+                min_val = min_val.item()
+            else:
+                min_val = min_val.flatten()[0].item()
         
         if isinstance(max_val, torch.Tensor):
-            max_val = max_val.item()
+            # Handle multi-element tensors by taking the first scalar value
+            if max_val.numel() == 1:
+                max_val = max_val.item()
+            else:
+                max_val = max_val.flatten()[0].item()
 
         img_np = img_np * (max_val - min_val) + min_val
 
@@ -669,7 +677,11 @@ def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val
             # Use first element to ensure consistent scaling across all tiles
             first_val = scaleFactor[0]
             if isinstance(first_val, torch.Tensor):
-                scaleFactor = 1.0 / float(first_val.item())
+                # Handle multi-element tensors by taking the first scalar value
+                if first_val.numel() == 1:
+                    scaleFactor = 1.0 / float(first_val.item())
+                else:
+                    scaleFactor = 1.0 / float(first_val.flatten()[0].item())
             else:
                 scaleFactor = 1.0 / float(first_val)
         elif isinstance(scaleFactor, tuple):

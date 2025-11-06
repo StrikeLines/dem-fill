@@ -28,7 +28,6 @@ class DEMInpaintingPipeline(DiffusionPipeline):
                 "beta_schedule": "linear",
                 "solver_order": 2,
                 "prediction_type": "epsilon",
-                "solver_type": "dpmsolver++",
             })
         
         self.scheduler = scheduler
@@ -58,7 +57,6 @@ class DEMInpaintingPipeline(DiffusionPipeline):
                     "beta_schedule": "linear",
                     "solver_order": 2,
                     "prediction_type": "epsilon",
-                    "solver_type": "dpmsolver++",
                 }
             },
             "unipc": {
@@ -101,7 +99,6 @@ class DEMInpaintingPipeline(DiffusionPipeline):
                 "beta_schedule": "linear",
                 "solver_order": 2,
                 "prediction_type": "epsilon",
-                "solver_type": "dpmsolver++",
             })
         elif scheduler_type == "unipc":
             self.scheduler = UniPCMultistepScheduler.from_config({
@@ -165,7 +162,10 @@ class DEMInpaintingPipeline(DiffusionPipeline):
         
         # Initialize noise
         if y_t is None:
-            y_t = torch.randn_like(y_cond, generator=generator, device=device, dtype=self.torch_dtype)
+            if generator is not None:
+                y_t = torch.randn(y_cond.shape, generator=generator, device=device, dtype=self.torch_dtype)
+            else:
+                y_t = torch.randn_like(y_cond, device=device, dtype=self.torch_dtype)
         
         # Collect intermediate results if requested
         intermediates = []
@@ -183,18 +183,21 @@ class DEMInpaintingPipeline(DiffusionPipeline):
             
             # Create noise level tensor (for compatibility with existing U-Net)
             if hasattr(self, 'gammas'):
-                # Use original gamma formulation 
-                gamma_t = self.gammas[t].expand(batch_size, 1)
+                # Use original gamma formulation
+                gamma_t = self.gammas[t].expand(batch_size, 1).to(device)
             else:
                 # Fallback: create gamma from scheduler
-                gamma_t = (1 - self.scheduler.alphas_cumprod[t]).sqrt().expand(batch_size, 1)
+                gamma_t = (1 - self.scheduler.alphas_cumprod[t]).sqrt().expand(batch_size, 1).to(device)
             
             # Predict noise using existing U-Net
             model_input = torch.cat([y_cond, y_t], dim=1)
             noise_pred = self.unet(model_input, gamma_t)
             
             # Scheduler step
-            scheduler_output = self.scheduler.step(noise_pred, t, y_t, eta=eta, generator=generator)
+            if isinstance(self.scheduler, DDIMScheduler):
+                scheduler_output = self.scheduler.step(noise_pred, t, y_t, eta=eta, generator=generator)
+            else:
+                scheduler_output = self.scheduler.step(noise_pred, t, y_t, generator=generator)
             y_t = scheduler_output.prev_sample
             
             # Apply mask if provided (inpainting)
