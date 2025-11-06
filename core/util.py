@@ -47,6 +47,18 @@ class GeoTiffTiler:
                 tile_path = os.path.join(tiles_dir, tile['filename'])
                 f.write(f"{tile_path}\n")
         
+        # Save global scaling metadata for consistent normalization
+        if 'global_min' in metadata and 'global_max' in metadata:
+            global_metadata_path = os.path.join(tiles_dir, "global_scaling.json")
+            global_metadata = {
+                'global_min': metadata['global_min'],
+                'global_max': metadata['global_max'],
+                'nodata': metadata.get('nodata', None)
+            }
+            with open(global_metadata_path, 'w') as f:
+                json.dump(global_metadata, f, indent=2)
+            print(f"Global scaling metadata saved to: {global_metadata_path}")
+        
         return flist_path
     
     def save_metadata(self, metadata: Dict, filepath: str) -> None:
@@ -141,6 +153,22 @@ class GeoTiffTiler:
             dtype = src.dtypes[0]
             count = src.count
             
+            # Calculate global min/max values for consistent tile scaling
+            print("Calculating global min/max values for consistent tile scaling...")
+            global_data = src.read(1)
+            if nodata is not None:
+                valid_data = global_data[global_data != nodata]
+            else:
+                valid_data = global_data.flatten()
+                
+            if len(valid_data) > 0:
+                global_min = float(valid_data.min())
+                global_max = float(valid_data.max())
+                print(f"Global elevation range: {global_min:.3f} to {global_max:.3f}")
+            else:
+                print("Warning: No valid data found for global scaling!")
+                global_min = global_max = 0.0
+            
             # Calculate effective step size (tile_size - overlap)
             step_size = self.tile_size - self.overlap
             
@@ -174,6 +202,8 @@ class GeoTiffTiler:
                 'nodata': nodata,
                 'dtype': dtype,
                 'count': count,
+                'global_min': global_min,
+                'global_max': global_max,
                 'tiles': []
             }
             
@@ -304,6 +334,22 @@ class GeoTiffTiler:
                     nodata = None
                 print(f"Auto-detected NoData value: {nodata}")
 
+            # Calculate global min/max values for consistent tile scaling
+            print("Calculating global min/max values for consistent tile scaling...")
+            global_data = src.read(1)
+            if nodata is not None:
+                valid_data = global_data[global_data != nodata]
+            else:
+                valid_data = global_data.flatten()
+                
+            if len(valid_data) > 0:
+                global_min = float(valid_data.min())
+                global_max = float(valid_data.max())
+                print(f"Global elevation range: {global_min:.3f} to {global_max:.3f}")
+            else:
+                print("Warning: No valid data found for global scaling!")
+                global_min = global_max = 0.0
+
             # print(f"detected NoData value: {nodata}")
 
             step_size = self.tile_size - self.overlap
@@ -336,6 +382,8 @@ class GeoTiffTiler:
                     'nodata': nodata,
                     'dtype': dtype,
                     'count': count,
+                    'global_min': global_min,
+                    'global_max': global_max,
                     'tiles': []
                 }
 

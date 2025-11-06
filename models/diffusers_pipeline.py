@@ -196,7 +196,11 @@ class DEMInpaintingPipeline(DiffusionPipeline):
             # Scheduler step
             if isinstance(self.scheduler, DDIMScheduler):
                 scheduler_output = self.scheduler.step(noise_pred, t, y_t, eta=eta, generator=generator)
+            elif isinstance(self.scheduler, UniPCMultistepScheduler):
+                # UniPC doesn't support generator argument
+                scheduler_output = self.scheduler.step(noise_pred, t, y_t)
             else:
+                # DPM-Solver++ and others support generator
                 scheduler_output = self.scheduler.step(noise_pred, t, y_t, generator=generator)
             y_t = scheduler_output.prev_sample
             

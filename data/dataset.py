@@ -9,6 +9,7 @@ import torch
 import numpy as np
 import random
 import cv2
+import json
 from scipy.ndimage import binary_dilation
 
 IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
@@ -61,6 +62,30 @@ class DEMDataset(data.Dataset):
         self.horizontal_flip = horizontal_flip
         self.data_aug = data_aug
         self.rotate_angles = [0, 90, 180, 270]
+        
+        # Load global scaling metadata if available
+        self.global_min = None
+        self.global_max = None
+        try:
+            # Check if data_root is a file list, get directory
+            if os.path.isfile(data_root):
+                tiles_dir = os.path.dirname(data_root)
+            else:
+                tiles_dir = data_root
+                
+            global_metadata_path = os.path.join(tiles_dir, "global_scaling.json")
+            if os.path.exists(global_metadata_path):
+                with open(global_metadata_path, 'r') as f:
+                    global_metadata = json.load(f)
+                self.global_min = global_metadata.get('global_min')
+                self.global_max = global_metadata.get('global_max')
+                print(f"Loaded global scaling: min={self.global_min:.3f}, max={self.global_max:.3f}")
+                print("Using global scaling to prevent tile edge artifacts")
+            else:
+                print("No global scaling metadata found - using per-tile scaling (may cause edge artifacts)")
+        except Exception as e:
+            print(f"Could not load global scaling metadata: {e}")
+            print("Falling back to per-tile scaling")
 
     def __getitem__(self, aug_index):
         ret = {}
@@ -105,14 +130,21 @@ class DEMDataset(data.Dataset):
             dilated_mask = binary_dilation(mask_np, iterations=2)
             mask = torch.from_numpy(dilated_mask.astype(np.float32)).unsqueeze(0)
 
-        # Normalize using non-masked areas only
-        valid_mask = mask == 0
-        if valid_mask.sum() == 0:
-            print(f"Warning - No valid data found after masking in {self.gt_imgs[index]}")
-            min_val, max_val = img.min(), img.max()
+        # Use global scaling if available, otherwise fall back to per-tile scaling
+        if self.global_min is not None and self.global_max is not None:
+            # Use global scaling for consistent tile processing
+            min_val = torch.tensor(self.global_min, dtype=img.dtype)
+            max_val = torch.tensor(self.global_max, dtype=img.dtype)
+            print(f"Using global scaling: {float(min_val):.3f} to {float(max_val):.3f}")
         else:
-            valid_vals = img[valid_mask]
-            min_val, max_val = valid_vals.min(), valid_vals.max()
+            # Fall back to per-tile scaling (original behavior)
+            valid_mask = mask == 0
+            if valid_mask.sum() == 0:
+                print(f"Warning - No valid data found after masking in {self.gt_imgs[index]}")
+                min_val, max_val = img.min(), img.max()
+            else:
+                valid_vals = img[valid_mask]
+                min_val, max_val = valid_vals.min(), valid_vals.max()
 
         diff = max_val - min_val
         if diff == 0:
