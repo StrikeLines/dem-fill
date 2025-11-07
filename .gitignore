@@ -87,4 +87,4 @@ tmp/
 .tmp/
 *.tmp
 *.bak
-*.backup
+*.backuptraining/

@@ -219,7 +219,7 @@ if __name__ == '__main__':
     
     # Diffusers options for fast inference
     parser.add_argument('--use_diffusers', action='store_true', help='Enable fast diffusers-based inference')
-    parser.add_argument('--scheduler_type', default='dpmpp', choices=['dpmpp', 'unipc', 'ddim', 'euler'],
+    parser.add_argument('--scheduler_type', default='dpmpp', choices=['dpmpp', 'unipc', 'ddim', 'ddpm', 'euler'],
                        help='Scheduler type for diffusers (default: dpmpp)')
     parser.add_argument('--inference_steps', type=int, default=None,
                        help='Number of inference steps for diffusers (default: auto-select based on scheduler)')

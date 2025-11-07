@@ -1,9 +1,18 @@
 import torch
 import numpy as np
 from typing import Optional, Union, Dict, Any
-from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler, UniPCMultistepScheduler
+from diffusers import DiffusionPipeline, DPMSolverMultistepScheduler, UniPCMultistepScheduler, DDPMScheduler
 from diffusers.schedulers import DDIMScheduler
 from tqdm import tqdm
+
+def extract(a, t, x_shape=(1,1,1,1)):
+    """
+    CRITICAL FIX: This is the exact extract function from the original network.py
+    We must use the same noise level calculation format!
+    """
+    b, *_ = t.shape
+    out = a.gather(-1, t)
+    return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
 class DEMInpaintingPipeline(DiffusionPipeline):
     """
@@ -43,17 +52,27 @@ class DEMInpaintingPipeline(DiffusionPipeline):
         
         Args:
             network: The existing Network object with denoise_fn
-            scheduler_type: Type of scheduler ('dpmpp', 'unipc', 'ddim', 'euler')
+            scheduler_type: Type of scheduler ('dpmpp', 'unipc', 'ddim', 'ddpm')
         """
+        
+        # REVERT DESTRUCTIVE CHANGES: Use diffusers-friendly beta values
+        # The original config beta_end=0.09 is too high for diffusers schedulers!
+        
+        # Use beta values that work well with modern diffusers schedulers
+        beta_start = 1e-4  # This is fine
+        beta_end = 0.02    # REVERT: Use diffusers-friendly value, not 0.09!
+        num_timesteps = network.num_timesteps  # Use actual network timesteps
+        
+        print(f"[DIFFUSERS] Using diffusers-compatible beta schedule: start={beta_start}, end={beta_end}, steps={num_timesteps}")
         
         # Map scheduler types to configurations
         scheduler_configs = {
             "dpmpp": {
                 "class": DPMSolverMultistepScheduler,
                 "config": {
-                    "num_train_timesteps": network.num_timesteps,
-                    "beta_start": 0.0001,
-                    "beta_end": 0.02,
+                    "num_train_timesteps": num_timesteps,
+                    "beta_start": beta_start,
+                    "beta_end": beta_end,
                     "beta_schedule": "linear",
                     "solver_order": 2,
                     "prediction_type": "epsilon",
@@ -62,9 +81,9 @@ class DEMInpaintingPipeline(DiffusionPipeline):
             "unipc": {
                 "class": UniPCMultistepScheduler,
                 "config": {
-                    "num_train_timesteps": network.num_timesteps,
-                    "beta_start": 0.0001,
-                    "beta_end": 0.02,
+                    "num_train_timesteps": num_timesteps,
+                    "beta_start": beta_start,
+                    "beta_end": beta_end,
                     "beta_schedule": "linear",
                     "prediction_type": "epsilon",
                 }
@@ -72,9 +91,19 @@ class DEMInpaintingPipeline(DiffusionPipeline):
             "ddim": {
                 "class": DDIMScheduler,
                 "config": {
-                    "num_train_timesteps": network.num_timesteps,
-                    "beta_start": 0.0001,
-                    "beta_end": 0.02,
+                    "num_train_timesteps": num_timesteps,
+                    "beta_start": beta_start,
+                    "beta_end": beta_end,
+                    "beta_schedule": "linear",
+                    "prediction_type": "epsilon",
+                }
+            },
+            "ddpm": {
+                "class": DDPMScheduler,
+                "config": {
+                    "num_train_timesteps": num_timesteps,
+                    "beta_start": beta_start,
+                    "beta_end": beta_end,
                     "beta_schedule": "linear",
                     "prediction_type": "epsilon",
                 }
@@ -87,37 +116,56 @@ class DEMInpaintingPipeline(DiffusionPipeline):
         scheduler_info = scheduler_configs[scheduler_type]
         scheduler = scheduler_info["class"].from_config(scheduler_info["config"])
         
-        return cls(network.denoise_fn, scheduler, **kwargs)
+        # Store network reference for potential future use
+        pipeline = cls(network.denoise_fn, scheduler, **kwargs)
+        pipeline._original_network = network
+        
+        return pipeline
     
     def set_scheduler(self, scheduler_type: str):
         """Change scheduler type on the fly"""
+        # REVERT: Use diffusers-compatible beta values
+        num_timesteps = getattr(self._original_network, 'num_timesteps', 1000) if hasattr(self, '_original_network') else 1000
+        beta_start = 1e-4
+        beta_end = 0.02  # Diffusers-friendly value
+        
         if scheduler_type == "dpmpp":
             self.scheduler = DPMSolverMultistepScheduler.from_config({
-                "num_train_timesteps": 1000,
-                "beta_start": 0.0001,
-                "beta_end": 0.02,
+                "num_train_timesteps": num_timesteps,
+                "beta_start": beta_start,
+                "beta_end": beta_end,
                 "beta_schedule": "linear",
                 "solver_order": 2,
                 "prediction_type": "epsilon",
             })
         elif scheduler_type == "unipc":
             self.scheduler = UniPCMultistepScheduler.from_config({
-                "num_train_timesteps": 1000,
-                "beta_start": 0.0001,
-                "beta_end": 0.02,
+                "num_train_timesteps": num_timesteps,
+                "beta_start": beta_start,
+                "beta_end": beta_end,
                 "beta_schedule": "linear",
                 "prediction_type": "epsilon",
             })
         elif scheduler_type == "ddim":
             self.scheduler = DDIMScheduler.from_config({
-                "num_train_timesteps": 1000,
-                "beta_start": 0.0001,
-                "beta_end": 0.02,
+                "num_train_timesteps": num_timesteps,
+                "beta_start": beta_start,
+                "beta_end": beta_end,
+                "beta_schedule": "linear",
+                "prediction_type": "epsilon",
+            })
+        elif scheduler_type == "ddpm":
+            self.scheduler = DDPMScheduler.from_config({
+                "num_train_timesteps": num_timesteps,
+                "beta_start": beta_start,
+                "beta_end": beta_end,
                 "beta_schedule": "linear",
                 "prediction_type": "epsilon",
             })
         else:
             raise ValueError(f"Unknown scheduler type: {scheduler_type}")
+        
+        print(f"[DIFFUSERS] Updated scheduler {scheduler_type} with beta: start={beta_start}, end={beta_end}, steps={num_timesteps}")
     
     @torch.no_grad()
     def __call__(
@@ -181,17 +229,19 @@ class DEMInpaintingPipeline(DiffusionPipeline):
             # Expand timestep for batch
             timestep = t.expand(batch_size)
             
-            # Create noise level tensor (for compatibility with existing U-Net)
-            if hasattr(self, 'gammas'):
-                # Use original gamma formulation
-                gamma_t = self.gammas[t].expand(batch_size, 1).to(device)
+            # REVERT: Use scheduler's noise level calculation (compatible with diffusers)
+            # The original gamma calculation doesn't work well with diffusers schedulers
+            if hasattr(self.scheduler, 'alphas_cumprod'):
+                # Calculate noise level from scheduler's alpha values
+                alpha_cumprod_t = self.scheduler.alphas_cumprod[t]
+                noise_level = (1 - alpha_cumprod_t).sqrt().expand(batch_size, 1).to(device)
             else:
-                # Fallback: create gamma from scheduler
-                gamma_t = (1 - self.scheduler.alphas_cumprod[t]).sqrt().expand(batch_size, 1).to(device)
+                # Fallback for schedulers without alphas_cumprod
+                noise_level = torch.sqrt(t.float() / self.scheduler.num_train_timesteps).expand(batch_size, 1).to(device)
             
-            # Predict noise using existing U-Net
+            # Predict noise using U-Net
             model_input = torch.cat([y_cond, y_t], dim=1)
-            noise_pred = self.unet(model_input, gamma_t)
+            noise_pred = self.unet(model_input, noise_level)
             
             # Scheduler step
             if isinstance(self.scheduler, DDIMScheduler):
@@ -199,6 +249,9 @@ class DEMInpaintingPipeline(DiffusionPipeline):
             elif isinstance(self.scheduler, UniPCMultistepScheduler):
                 # UniPC doesn't support generator argument
                 scheduler_output = self.scheduler.step(noise_pred, t, y_t)
+            elif isinstance(self.scheduler, DDPMScheduler):
+                # DDPM supports generator
+                scheduler_output = self.scheduler.step(noise_pred, t, y_t, generator=generator)
             else:
                 # DPM-Solver++ and others support generator
                 scheduler_output = self.scheduler.step(noise_pred, t, y_t, generator=generator)
