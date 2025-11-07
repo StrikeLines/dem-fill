@@ -7,8 +7,10 @@ tqdm
 scikit-image
 pillow
 diffusers
+
 gdown
 parallel
+
 
 # Geospatial packages
 rasterio
@@ -24,6 +26,10 @@ opencv-python
 albumentations
 tensorboard
 pytorch-lightning
+
+# Diffusion models
+diffusers>=0.24.0
+accelerate
 
 # PyTorch ecosystem (CUDA 12.8 compatible)
 # Note: Install these separately with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124

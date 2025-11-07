@@ -47,6 +47,18 @@ class GeoTiffTiler:
                 tile_path = os.path.join(tiles_dir, tile['filename'])
                 f.write(f"{tile_path}\n")
         
+        # Save global scaling metadata for consistent normalization
+        if 'global_min' in metadata and 'global_max' in metadata:
+            global_metadata_path = os.path.join(tiles_dir, "global_scaling.json")
+            global_metadata = {
+                'global_min': metadata['global_min'],
+                'global_max': metadata['global_max'],
+                'nodata': metadata.get('nodata', None)
+            }
+            with open(global_metadata_path, 'w') as f:
+                json.dump(global_metadata, f, indent=2)
+            print(f"Global scaling metadata saved to: {global_metadata_path}")
+        
         return flist_path
     
     def save_metadata(self, metadata: Dict, filepath: str) -> None:
@@ -141,6 +153,22 @@ class GeoTiffTiler:
             dtype = src.dtypes[0]
             count = src.count
             
+            # Calculate global min/max values for consistent tile scaling
+            print("Calculating global min/max values for consistent tile scaling...")
+            global_data = src.read(1)
+            if nodata is not None:
+                valid_data = global_data[global_data != nodata]
+            else:
+                valid_data = global_data.flatten()
+                
+            if len(valid_data) > 0:
+                global_min = float(valid_data.min())
+                global_max = float(valid_data.max())
+                print(f"Global elevation range: {global_min:.3f} to {global_max:.3f}")
+            else:
+                print("Warning: No valid data found for global scaling!")
+                global_min = global_max = 0.0
+            
             # Calculate effective step size (tile_size - overlap)
             step_size = self.tile_size - self.overlap
             
@@ -174,6 +202,8 @@ class GeoTiffTiler:
                 'nodata': nodata,
                 'dtype': dtype,
                 'count': count,
+                'global_min': global_min,
+                'global_max': global_max,
                 'tiles': []
             }
             
@@ -304,6 +334,22 @@ class GeoTiffTiler:
                     nodata = None
                 print(f"Auto-detected NoData value: {nodata}")
 
+            # Calculate global min/max values for consistent tile scaling
+            print("Calculating global min/max values for consistent tile scaling...")
+            global_data = src.read(1)
+            if nodata is not None:
+                valid_data = global_data[global_data != nodata]
+            else:
+                valid_data = global_data.flatten()
+                
+            if len(valid_data) > 0:
+                global_min = float(valid_data.min())
+                global_max = float(valid_data.max())
+                print(f"Global elevation range: {global_min:.3f} to {global_max:.3f}")
+            else:
+                print("Warning: No valid data found for global scaling!")
+                global_min = global_max = 0.0
+
             # print(f"detected NoData value: {nodata}")
 
             step_size = self.tile_size - self.overlap
@@ -336,6 +382,8 @@ class GeoTiffTiler:
                     'nodata': nodata,
                     'dtype': dtype,
                     'count': count,
+                    'global_min': global_min,
+                    'global_max': global_max,
                     'tiles': []
                 }
 
@@ -602,6 +650,7 @@ class GeoTiffTiler:
 def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_val=None, max_val=None):
     '''
     Converts a torch Tensor into an image Numpy array.
+    Simplified version for consistent tile processing to prevent edge artifacts.
     
     Input:
         - tensor: torch.Tensor (4D, 3D, or 2D)
@@ -635,13 +684,21 @@ def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_v
     img_np = (img_np - min_max[0]) / (min_max[1] - min_max[0])
     img_np = np.clip(img_np, 0, 1)
 
-    # Optional full denormalization using original DEM min and max
+    # Simplified tensor handling to ensure consistency across tiles
     if min_val is not None and max_val is not None:
         if isinstance(min_val, torch.Tensor):
-            min_val = min_val.item()
+            # Handle multi-element tensors by taking the first scalar value
+            if min_val.numel() == 1:
+                min_val = min_val.item()
+            else:
+                min_val = min_val.flatten()[0].item()
         
         if isinstance(max_val, torch.Tensor):
-            max_val = max_val.item()
+            # Handle multi-element tensors by taking the first scalar value
+            if max_val.numel() == 1:
+                max_val = max_val.item()
+            else:
+                max_val = max_val.flatten()[0].item()
 
         img_np = img_np * (max_val - min_val) + min_val
 
@@ -656,20 +713,39 @@ def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_v
 
     return img_np.astype(out_type).squeeze()
 
-##Changed Here! added min_val and max_val args
+##Changed Here! Fixed scaling artifacts by using consistent processing for all tiles
 def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val=None, scaleFactor=None):
     """
-    Post-process model outputs, including optional upscaling based on inverse of scaleFactor.
+    Post-process model outputs with consistent scaling to prevent tile edge artifacts.
+    Uses uniform processing for all tiles to ensure proper averaging during reconstruction.
     """
     if scaleFactor is not None:
         if isinstance(scaleFactor, list):
             # Convert list of tensors to floats and invert (e.g., 0.5 -> 2.0)
-            scaleFactor = tuple(1.0 / float(x.item()) for x in scaleFactor)
+            # Use first element to ensure consistent scaling across all tiles
+            first_val = scaleFactor[0]
+            if isinstance(first_val, torch.Tensor):
+                # Handle multi-element tensors by taking the first scalar value
+                if first_val.numel() == 1:
+                    scaleFactor = 1.0 / float(first_val.item())
+                else:
+                    scaleFactor = 1.0 / float(first_val.flatten()[0].item())
+            else:
+                scaleFactor = 1.0 / float(first_val)
         elif isinstance(scaleFactor, tuple):
-            scaleFactor = tuple(1.0 / float(x) for x in scaleFactor)
+            # Use first element to ensure consistent scaling across all tiles
+            scaleFactor = 1.0 / float(scaleFactor[0])
         elif isinstance(scaleFactor, torch.Tensor):
-            scaleFactor = tuple(1.0 / float(x.item()) for x in scaleFactor)
+            # Use first element or single value to ensure consistent scaling
+            if scaleFactor.numel() == 1:
+                scaleFactor = 1.0 / float(scaleFactor.item())
+            else:
+                scaleFactor = 1.0 / float(scaleFactor.flatten()[0].item())
+        else:
+            # Handle numeric types
+            scaleFactor = 1.0 / float(scaleFactor)
 
+        # Apply SAME scaleFactor to ALL tiles to maintain consistency
         return [
             tensor2img(
                 F.interpolate(image.unsqueeze(0), scale_factor=scaleFactor, mode='bicubic', align_corners=False).squeeze(0),
@@ -681,6 +757,7 @@ def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val
             for image in images
         ]
     else:
+        # Apply SAME processing to ALL tiles to maintain consistency
         return [
             tensor2img(
                 image,

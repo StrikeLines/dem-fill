@@ -5,6 +5,7 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 from core.base_network import BaseNetwork
+from .diffusers_pipeline import DEMInpaintingPipeline
 class Network(BaseNetwork):
     def __init__(self, unet, beta_schedule, module_name='sr3', **kwargs):
         super(Network, self).__init__(**kwargs)
@@ -15,6 +16,10 @@ class Network(BaseNetwork):
         
         self.denoise_fn = UNet(**unet)
         self.beta_schedule = beta_schedule
+        
+        # Diffusers pipeline for fast inference (lazy initialization)
+        self._diffusers_pipeline = None
+        self._use_diffusers = False
 
     def set_loss(self, loss_fn):
         self.loss_fn = loss_fn
@@ -84,12 +89,89 @@ class Network(BaseNetwork):
         noise = torch.randn_like(y_t) if any(t>0) else torch.zeros_like(y_t)
         return model_mean + noise * (0.5 * model_log_variance).exp()
 
+    def enable_diffusers(self, scheduler_type="dpmpp"):
+        """
+        Enable fast diffusers-based inference
+        
+        Args:
+            scheduler_type: One of 'dpmpp', 'unipc', 'ddim'
+        """
+        self._use_diffusers = True
+        if self._diffusers_pipeline is None:
+            self._diffusers_pipeline = DEMInpaintingPipeline.from_network(
+                self, scheduler_type=scheduler_type
+            )
+        else:
+            self._diffusers_pipeline.set_scheduler(scheduler_type)
+    
+    def disable_diffusers(self):
+        """Disable diffusers and use original DDPM sampling"""
+        self._use_diffusers = False
+    
     @torch.no_grad()
-    def restoration(self, y_cond, y_t=None, y_0=None, mask=None, sample_num=8):
+    def restoration(self, y_cond, y_t=None, y_0=None, mask=None, sample_num=8, num_inference_steps=None):
+        """
+        Unified restoration method supporting both original DDPM and fast diffusers
+        
+        Args:
+            y_cond: Conditioning input
+            y_t: Initial noise (optional)
+            y_0: Ground truth for inpainting (optional)
+            mask: Binary mask (optional)
+            sample_num: Number of intermediate samples to return (original method)
+            num_inference_steps: Number of steps for diffusers (if None, auto-select)
+        
+        Returns:
+            (final_result, intermediate_results) for compatibility
+        """
+        
+        if self._use_diffusers and self._diffusers_pipeline is not None:
+            # Use fast diffusers sampling
+            if num_inference_steps is None:
+                # Auto-select reasonable number of steps based on scheduler
+                scheduler_name = self._diffusers_pipeline.scheduler.__class__.__name__
+                if "DPM" in scheduler_name or "UniPC" in scheduler_name:
+                    num_inference_steps = 20  # Very fast
+                else:
+                    num_inference_steps = 50  # Still much faster than original
+            
+            print(f"Using {self._diffusers_pipeline.scheduler.__class__.__name__} with {num_inference_steps} steps")
+            
+            # Run diffusers inference
+            if sample_num > 0:
+                result, intermediates = self._diffusers_pipeline(
+                    y_cond=y_cond,
+                    y_t=y_t,
+                    y_0=y_0,
+                    mask=mask,
+                    num_inference_steps=num_inference_steps,
+                    return_intermediate=True,
+                    sample_num=sample_num
+                )
+                return result, intermediates
+            else:
+                result = self._diffusers_pipeline(
+                    y_cond=y_cond,
+                    y_t=y_t,
+                    y_0=y_0,
+                    mask=mask,
+                    num_inference_steps=num_inference_steps,
+                    return_intermediate=False
+                )
+                return result, result
+        
+        else:
+            # Use original DDPM sampling
+            print(f"Using original DDPM sampling with {self.num_timesteps} steps")
+            return self._restoration_original(y_cond, y_t, y_0, mask, sample_num)
+    
+    @torch.no_grad()
+    def _restoration_original(self, y_cond, y_t=None, y_0=None, mask=None, sample_num=8):
+        """Original DDPM restoration method (preserved for comparison)"""
         b, *_ = y_cond.shape
 
         assert self.num_timesteps > sample_num, 'num_timesteps must greater than sample_num'
-        sample_inter = None if sample_num == 0 else (self.num_timesteps//sample_num) 
+        sample_inter = None if sample_num == 0 else (self.num_timesteps//sample_num)
         
         y_t = default(y_t, lambda: torch.randn_like(y_cond))
         ret_arr = y_t
@@ -101,6 +183,46 @@ class Network(BaseNetwork):
             if sample_inter is not None and i % sample_inter == 0:
                 ret_arr = torch.cat([ret_arr, y_t], dim=0)
         return y_t, ret_arr
+    
+    def benchmark_inference(self, y_cond, mask=None, y_0=None):
+        """
+        Benchmark different inference methods
+        
+        Returns:
+            Dictionary with timing results
+        """
+        import time
+        results = {}
+        
+        # Test original method
+        start_time = time.time()
+        original_result, _ = self._restoration_original(y_cond, mask=mask, y_0=y_0, sample_num=0)
+        original_time = time.time() - start_time
+        results['original_ddpm'] = {
+            'time': original_time,
+            'steps': self.num_timesteps,
+            'result': original_result
+        }
+        
+        # Test diffusers methods
+        for scheduler_type in ['dpmpp', 'unipc', 'ddim']:
+            for steps in [10, 20, 50]:
+                self.enable_diffusers(scheduler_type)
+                
+                start_time = time.time()
+                diffusers_result, _ = self.restoration(
+                    y_cond, mask=mask, y_0=y_0, sample_num=0, num_inference_steps=steps
+                )
+                diffusers_time = time.time() - start_time
+                
+                results[f'{scheduler_type}_{steps}'] = {
+                    'time': diffusers_time,
+                    'steps': steps,
+                    'speedup': original_time / diffusers_time,
+                    'result': diffusers_result
+                }
+        
+        return results
 
     def forward(self, y_0, y_cond=None, mask=None, noise=None):
         # sampling from p(gammas)

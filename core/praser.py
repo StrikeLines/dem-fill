@@ -145,7 +145,19 @@ def parse(args):
             opt["tile_size"] = int(args.tile_size)
         except:
             opt["tile_size"] = 128
-            
+    
+    # Handle diffusers options
+    if hasattr(args, 'use_diffusers') and args.use_diffusers is not None:
+        opt["use_diffusers"] = args.use_diffusers
+    
+    if hasattr(args, 'scheduler_type') and args.scheduler_type is not None:
+        opt["scheduler_type"] = args.scheduler_type
+    
+    if hasattr(args, 'inference_steps') and args.inference_steps is not None:
+        opt["inference_steps"] = args.inference_steps
+    
+    if hasattr(args, 'benchmark_inference') and args.benchmark_inference is not None:
+        opt["benchmark_inference"] = args.benchmark_inference
 
     ''' set cuda environment '''
     if len(opt['gpu_ids']) > 1:

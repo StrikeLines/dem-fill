@@ -217,6 +217,15 @@ if __name__ == '__main__':
     parser.add_argument('--keep_temp', action='store_true', help='Keep temporary files after processing')
     parser.add_argument('--nodata_value', default=None, help='NoData value in the input image')
     
+    # Diffusers options for fast inference
+    parser.add_argument('--use_diffusers', action='store_true', help='Enable fast diffusers-based inference')
+    parser.add_argument('--scheduler_type', default='dpmpp', choices=['dpmpp', 'unipc', 'ddim', 'ddpm', 'euler'],
+                       help='Scheduler type for diffusers (default: dpmpp)')
+    parser.add_argument('--inference_steps', type=int, default=None,
+                       help='Number of inference steps for diffusers (default: auto-select based on scheduler)')
+    parser.add_argument('--benchmark_inference', action='store_true',
+                       help='Benchmark different inference methods and schedulers')
+    
 
     ''' parser configs '''
     args = parser.parse_args()
