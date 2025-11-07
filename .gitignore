@@ -3,6 +3,7 @@ experiments/
 pretrained/
 temp/
 test/
+training/
 
 # Python
 __pycache__/
@@ -87,4 +88,8 @@ tmp/
 .tmp/
 *.tmp
 *.bak
-*.backuptraining/
+*.backup
+
+# Archive files
+*.tar
+*.zip
