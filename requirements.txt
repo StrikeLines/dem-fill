@@ -6,9 +6,6 @@ matplotlib
 tqdm
 scikit-image
 pillow
-diffusers
-gdown
-parallel
 
 # Geospatial packages
 rasterio

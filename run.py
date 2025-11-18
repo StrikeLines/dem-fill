@@ -12,6 +12,8 @@ from datetime import datetime
 import os
 import rasterio
 import numpy as np
+import math
+from generate_tile_worldfiles import generate_worldfiles_for_tiles
 
 torch.cuda.empty_cache()
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -338,6 +340,63 @@ if __name__ == '__main__':
             # Clean up mask tiler (we only need the main tiler for merging)
             del mask_tiler
                 
+    
+    # Generate world files for predicted output directory (before inference starts)
+    if opt.get('input_img') and tiler:
+        print("\n" + "─" * 40)
+        print("GENERATING WORLD FILES FOR INFERENCE OUTPUT")
+        print("─" * 40)
+        
+        # Predict the output tiles directory path
+        output_tiles_dir = os.path.join(opt['path']['results'], 'test', '0')
+        
+        # Create the directory if it doesn't exist
+        os.makedirs(output_tiles_dir, exist_ok=True)
+        
+        tile_overlap = opt.get('tile_overlap', 0)
+        tile_size = opt.get('tile_size', 128)
+        
+        try:
+            # Generate world files based on predicted tile layout from metadata
+            from generate_tile_worldfiles import calculate_tile_worldfile_params, write_world_file
+            
+            # Get the image metadata to predict tile layout
+            with rasterio.open(opt['input_img']) as src:
+                original_transform = src.transform
+                width, height = src.width, src.height
+            
+            # Calculate tiling parameters
+            step_size = tile_size - tile_overlap
+            tiles_x = math.ceil((width - tile_overlap) / step_size)
+            tiles_y = math.ceil((height - tile_overlap) / step_size)
+            
+            print(f"Creating world files for predicted {tiles_x}x{tiles_y} = {tiles_x * tiles_y} output tiles...")
+            
+            worldfiles_created = 0
+            for row in range(tiles_y):
+                for col in range(tiles_x):
+                    # Create predicted tile filename
+                    tile_filename = f"dem_tile_{row:04d}_{col:04d}.tif"
+                    world_filename = f"dem_tile_{row:04d}_{col:04d}.tfw"
+                    world_path = os.path.join(output_tiles_dir, world_filename)
+                    
+                    # Calculate world file parameters for this tile
+                    params = calculate_tile_worldfile_params(
+                        original_transform, tile_size, row, col, step_size
+                    )
+                    
+                    # Write world file
+                    write_world_file(world_path, params)
+                    worldfiles_created += 1
+                    
+                    if worldfiles_created % 100 == 0:
+                        print(f"Generated {worldfiles_created} world files...")
+            
+            print(f"✓ {worldfiles_created} world files pre-generated for output directory: {output_tiles_dir}")
+            
+        except Exception as e:
+            print(f"Warning: Could not generate world files for output directory: {str(e)}")
+            print("Proceeding with inference - world files can be generated manually later")
     
     '''cuda devices'''
     gpu_str = ','.join(str(x) for x in opt['gpu_ids'])

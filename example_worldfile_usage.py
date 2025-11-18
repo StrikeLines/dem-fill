@@ -18,11 +18,11 @@ def example_usage():
     print("=== Tile World File Generator Example ===\n")
     
     # Example parameters (adjust these to your actual data)
-    input_image = "./test/21-small.tif"  # Original georeferenced DEM
-    tiles_directory = "./experiments/test_DEM_inpainting_251030_165439/results/test/0"  # Directory with tiles
+    input_image = "/workspace/shared/dem-fill/test/11-2-25-test.tif"  # Original georeferenced DEM
+    tiles_directory = "/workspace/shared/dem-fill/experiments/test_DEM_inpainting_251118_005433/results/test/0"  # Directory with tiles
     tile_size = 128
     overlap = 0
-    prefix = "tile"
+    prefix = "dem_tile"
     
     print(f"Input image: {input_image}")
     print(f"Tiles directory: {tiles_directory}")
