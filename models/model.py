@@ -120,23 +120,26 @@ class Palette(BaseModel):
         ret_path = []
         ret_result = []
         for idx in range(self.batch_size):
-            ret_path.append('GT_{}'.format(self.path[idx]))
-            ret_result.append(self.gt_image[idx].detach().float().cpu())
+            # Only save the main output files (dem_tile*), skip GT_, Cond_, and Mask_ files
+            # ret_path.append('GT_{}'.format(self.path[idx]))
+            # ret_result.append(self.gt_image[idx].detach().float().cpu())
 
-            ret_path.append('Cond_{}'.format(self.path[idx]))
-            ret_result.append(self.cond_image[idx].detach().float().cpu())
+            # ret_path.append('Cond_{}'.format(self.path[idx]))
+            # ret_result.append(self.cond_image[idx].detach().float().cpu())
 
             ret_path.append(self.path[idx])
             ret_result.append(self.output[idx].detach().float().cpu())
 
-            if self.sample_num > 0:
-                for k in range(self.sample_num + 1):
-                    ret_path.append('Inter_{}_{}'.format(k, self.path[idx]))
-                    ret_result.append(self.visuals[k * self.batch_size + idx].detach().float().cpu())
+            # Skip intermediate sample files to save disk space
+            # if self.sample_num > 0:
+            #     for k in range(self.sample_num + 1):
+            #         ret_path.append('Inter_{}_{}'.format(k, self.path[idx]))
+            #         ret_result.append(self.visuals[k * self.batch_size + idx].detach().float().cpu())
         
-        if self.task in ['inpainting','uncropping'] and self.mask is not None:
-            ret_path.extend(['Mask_{}'.format(name) for name in self.path])
-            ret_result.extend(self.mask.detach().float().cpu())
+        # Skip mask files
+        # if self.task in ['inpainting','uncropping'] and self.mask is not None:
+        #     ret_path.extend(['Mask_{}'.format(name) for name in self.path])
+        #     ret_result.extend(self.mask.detach().float().cpu())
 
         self.results_dict = self.results_dict._replace(name=ret_path, result=ret_result)
         return self.results_dict._asdict()
