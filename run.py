@@ -430,17 +430,24 @@ if __name__ == '__main__':
             # print(opt)
             # Determine output path
             if opt.get('path') and opt.get('path').get('results'):
-                # Use results directory from config
+                # Use results directory from config for working files
                 results_dir = opt.get('path').get('results')
                 os.makedirs(results_dir, exist_ok=True)
+                
+                # Create output directory in the root of the repo for final stitched file
+                output_dir = os.path.join(os.path.dirname(os.path.dirname(results_dir)), "output")
+                os.makedirs(output_dir, exist_ok=True)
+                
                 output_filename = os.path.basename(opt['input_img'])
                 # Add processed suffix
                 name, ext = os.path.splitext(output_filename)
                 output_filename = f"{name}_processed{ext}"
-                output_image = os.path.join(results_dir, output_filename)
+                
+                # Save the final stitched file to the output directory
+                output_image = os.path.join(output_dir, output_filename)
                 
                 # Merge tiles back to single georeferenced image
-                tiles_dir = os.path.join(results_dir,r'test/0')
+                tiles_dir = os.path.join(results_dir, r'test/0')
                 tiler.merge_tiles(tiles_dir, img_metadata, output_image, crop_to_original=True)
                 print(f"\n✓ Final merged image saved to: {output_image}")
             else:
