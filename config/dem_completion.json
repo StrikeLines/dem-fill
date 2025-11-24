@@ -119,8 +119,8 @@
                         "test": {
                             "schedule": "linear",
                             "n_timestep": 1000,
-                            "linear_start": 1e-4,
-                            "linear_end": 0.09
+                            "linear_start": 1e-6,
+                            "linear_end": 0.01
                         }
                     }
                 }
