@@ -120,15 +120,41 @@ class Palette(BaseModel):
         ret_path = []
         ret_result = []
         for idx in range(self.batch_size):
+            # Extract scale factor for this item
+            if isinstance(self.scaleFactor, torch.Tensor):
+                if self.scaleFactor.dim() > 0:
+                    if self.scaleFactor.size(0) == self.batch_size:
+                        # Get individual scale factor for this item
+                        scale_factor = self.scaleFactor[idx:idx+1]
+                    else:
+                        # Use the same scale factor for all items
+                        scale_factor = self.scaleFactor
+                else:
+                    # Single scalar tensor
+                    scale_factor = self.scaleFactor
+            else:
+                # Handle non-tensor scale factors
+                scale_factor = self.scaleFactor
+
             # Only save the main output files (dem_tile*), skip GT_, Cond_, and Mask_ files
-            # ret_path.append('GT_{}'.format(self.path[idx]))
-            # ret_result.append(self.gt_image[idx].detach().float().cpu())
-
-            # ret_path.append('Cond_{}'.format(self.path[idx]))
-            # ret_result.append(self.cond_image[idx].detach().float().cpu())
-
             ret_path.append(self.path[idx])
-            ret_result.append(self.output[idx].detach().float().cpu())
+            # Extract per-item min/max values
+            if isinstance(self.min_val, torch.Tensor):
+                min_val = self.min_val[idx] if self.min_val.dim() > 0 else self.min_val
+            else:
+                min_val = self.min_val
+
+            if isinstance(self.max_val, torch.Tensor):
+                max_val = self.max_val[idx] if self.max_val.dim() > 0 else self.max_val
+            else:
+                max_val = self.max_val
+
+            ret_result.append({
+                'data': self.output[idx].detach().float().cpu(),
+                'scale_factor': scale_factor,
+                'min_val': min_val,
+                'max_val': max_val
+            })
 
             # Skip intermediate sample files to save disk space
             # if self.sample_num > 0:
@@ -141,7 +167,9 @@ class Palette(BaseModel):
         #     ret_path.extend(['Mask_{}'.format(name) for name in self.path])
         #     ret_result.extend(self.mask.detach().float().cpu())
 
-        self.results_dict = self.results_dict._replace(name=ret_path, result=ret_result)
+        from collections import namedtuple
+        Results = namedtuple('Results', ['name', 'result'])
+        self.results_dict = Results(name=ret_path, result=ret_result)
         return self.results_dict._asdict()
 
     def train_step(self):
@@ -226,9 +254,9 @@ class Palette(BaseModel):
         self.test_metrics.reset()
         with torch.no_grad():
             for phase_data in tqdm.tqdm(self.phase_loader):
-                # print("PHASE_DATA,",phase_data)
                 self.set_input(phase_data)
-
+                
+                # Process entire batch at once
                 if self.cond_on_mask:
                     mask_channel = self.mask.clone()
                     mask_channel[mask_channel == 0] = -1
@@ -236,6 +264,7 @@ class Palette(BaseModel):
                 else:
                     cond_image = self.cond_image
 
+                # Run inference on full batch
                 if self.opt['distributed']:
                     if self.task in ['inpainting','uncropping']:
                         self.output, self.visuals = self.netG.module.restoration(cond_image, y_t=None,
@@ -244,10 +273,13 @@ class Palette(BaseModel):
                         self.output, self.visuals = self.netG.module.restoration(cond_image, sample_num=self.sample_num)
                 else:
                     if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.restoration(cond_image, y_t=None, 
+                        self.output, self.visuals = self.netG.restoration(cond_image, y_t=None,
                             y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
                     else:
                         self.output, self.visuals = self.netG.restoration(cond_image, sample_num=self.sample_num)
+
+                # Process results in parallel using GPU
+                self.iter += self.batch_size
                 
                 
                 # #Changed here! print added

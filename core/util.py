@@ -660,37 +660,69 @@ def tensor2img(tensor, min_max=(-1, 1), out_type=np.uint8, scale_factor=1, min_v
 def postprocess(images, out_type=np.uint8, scale_factor=1, min_val=None, max_val=None, scaleFactor=None):
     """
     Post-process model outputs, including optional upscaling based on inverse of scaleFactor.
+    Handles both raw tensors and dictionaries with per-item metadata.
     """
-    if scaleFactor is not None:
-        if isinstance(scaleFactor, list):
-            # Convert list of tensors to floats and invert (e.g., 0.5 -> 2.0)
-            scaleFactor = tuple(1.0 / float(x.item()) for x in scaleFactor)
-        elif isinstance(scaleFactor, tuple):
-            scaleFactor = tuple(1.0 / float(x) for x in scaleFactor)
-        elif isinstance(scaleFactor, torch.Tensor):
-            scaleFactor = tuple(1.0 / float(x.item()) for x in scaleFactor)
-
-        return [
-            tensor2img(
-                F.interpolate(image.unsqueeze(0), scale_factor=scaleFactor, mode='bicubic', align_corners=False).squeeze(0),
-                out_type=out_type,
-                scale_factor=scale_factor,
-                min_val=min_val,
-                max_val=max_val
-            )
-            for image in images
-        ]
-    else:
-        return [
-            tensor2img(
-                image,
-                out_type=out_type,
-                scale_factor=scale_factor,
-                min_val=min_val,
-                max_val=max_val
-            )
-            for image in images
-        ]
+    results = []
+    for image_data in images:
+        # Handle dictionary format with per-item metadata
+        if isinstance(image_data, dict):
+            data = image_data['data']
+            item_scale = image_data.get('scale_factor', scaleFactor)
+            item_min = image_data.get('min_val', min_val)
+            item_max = image_data.get('max_val', max_val)
+            
+            # Convert scale factor to tuple
+            if item_scale is not None:
+                # Handle scale factor conversion
+                if item_scale is not None:
+                    try:
+                        if isinstance(item_scale, torch.Tensor):
+                            if item_scale.dim() > 0:
+                                # Handle multi-dimensional tensor
+                                if item_scale.numel() == 1:
+                                    scale = 1.0 / item_scale[0].item()
+                                else:
+                                    scale = 1.0 / item_scale.view(-1)[0].item()
+                            else:
+                                # Handle 0-dim tensor
+                                scale = 1.0 / item_scale.item()
+                        elif isinstance(item_scale, (list, tuple)):
+                            scale = 1.0 / float(item_scale[0])
+                        else:
+                            scale = 1.0 / float(item_scale)
+                        
+                        # Use same scale for both dimensions
+                        item_scale = (scale, scale)
+                    except (IndexError, ValueError, RuntimeError):
+                        # Fallback to default scaling if conversion fails
+                        item_scale = (1.0, 1.0)
+            
+            # Apply upscaling if scale factor is provided
+            if item_scale is not None:
+                data = F.interpolate(data.unsqueeze(0), scale_factor=item_scale,
+                                  mode='bicubic', align_corners=False).squeeze(0)
+            
+            # Convert to image
+            result = tensor2img(data, out_type=out_type, scale_factor=scale_factor,
+                              min_val=item_min, max_val=item_max)
+            
+        else:
+            # Handle raw tensor format
+            data = image_data
+            if scaleFactor is not None:
+                if isinstance(scaleFactor, (list, torch.Tensor)):
+                    scale_tuple = tuple(1.0 / float(x.item()) for x in scaleFactor)
+                elif isinstance(scaleFactor, tuple):
+                    scale_tuple = tuple(1.0 / float(x) for x in scaleFactor)
+                data = F.interpolate(data.unsqueeze(0), scale_factor=scale_tuple,
+                                  mode='bicubic', align_corners=False).squeeze(0)
+            
+            result = tensor2img(data, out_type=out_type, scale_factor=scale_factor,
+                              min_val=min_val, max_val=max_val)
+        
+        results.append(result)
+    
+    return results
 
 
 def set_seed(seed, gl_seed=0):

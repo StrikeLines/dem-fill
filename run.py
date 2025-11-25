@@ -33,8 +33,15 @@ def main_worker(gpu, ngpus_per_node, opt):
             group_name='mtorch'
         )
     '''set seed and and cuDNN environment '''
+    # Enable cuDNN with memory-efficient settings
     torch.backends.cudnn.enabled = True
-    # warnings.warn('You have chosen to use cudnn for accleration. torch.backends.cudnn.enabled=True')
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+    
+    # Configure PyTorch for memory efficiency
+    torch.backends.cuda.max_split_size_mb = 512  # Limit CUDA memory splits
+    torch.backends.cuda.matmul.allow_tf32 = True  # Allow TF32 for better performance
+    
     Util.set_seed(opt['seed'])
 
     ''' set logger '''
@@ -43,6 +50,22 @@ def main_worker(gpu, ngpus_per_node, opt):
     phase_logger.info('Create the log file in directory {}.\n'.format(opt['path']['experiments_root']))
 
     '''set networks and dataset'''
+    # Configure parallel processing for test phase
+    if opt['phase'] == 'test':
+        # Optimize dataloader settings for parallel inference
+        opt['datasets'][opt['phase']]['dataloader']['args'].update({
+            'batch_size': opt['batch'] if opt['batch'] is not None else 4,  # Use command line batch size or default to 4
+            'num_workers': min(8, os.cpu_count()),  # Reduce worker count
+            'pin_memory': True,  # Speed up CPU to GPU transfers
+            'prefetch_factor': 2,  # Reduce prefetch to save memory
+            'persistent_workers': True  # Keep workers alive between batches
+        })
+        
+        # Enable memory management
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.set_per_process_memory_fraction(0.8)  # Leave some GPU memory free
+    
     phase_loader, val_loader = define_dataloader(phase_logger, opt) # val_loader is None if phase is test.
     networks = [define_network(phase_logger, opt, item_opt) for item_opt in opt['model']['which_networks']]
 
@@ -202,6 +225,7 @@ if __name__ == '__main__':
     parser.add_argument('-gpu', '--gpu_ids', type=str, default=None)
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-P', '--port', default='21012', type=str)
+    parser.add_argument('--distributed', action='store_true', help='Enable distributed processing')
     parser.add_argument('-o', '--output_dir_name', default=None)
     parser.add_argument('-pt', '--preprocess_type', default=None)
     parser.add_argument('-rs', '--resume_state', default=None)
@@ -439,9 +463,15 @@ if __name__ == '__main__':
                 os.makedirs(output_dir, exist_ok=True)
                 
                 output_filename = os.path.basename(opt['input_img'])
-                # Add processed suffix
                 name, ext = os.path.splitext(output_filename)
-                output_filename = f"{name}_processed{ext}"
+                base_output = f"{name}_processed{ext}"
+                
+                # Check if file exists and generate new name if needed
+                counter = 1
+                output_filename = base_output
+                while os.path.exists(os.path.join(output_dir, output_filename)):
+                    output_filename = f"{name}_processed-{counter}{ext}"
+                    counter += 1
                 
                 # Save the final stitched file to the output directory
                 output_image = os.path.join(output_dir, output_filename)

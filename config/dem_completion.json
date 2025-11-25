@@ -55,10 +55,10 @@
             },
             "dataloader":{
                 "args":{
-                    // "batch_size": 4, testing batch size
-                    "batch_size": 1, // Keep at 1 - code assumes single batch for inference
-                    "num_workers": 24, // Increased for H100's high memory bandwidth
-                    "pin_memory": true
+                    "batch_size": 8, // Increased for parallel inference
+                    "num_workers": 24, // High number of workers for data loading
+                    "pin_memory": true,
+                    "prefetch_factor": 4 // Prefetch more batches to keep GPU fed
                 }
             }
         }

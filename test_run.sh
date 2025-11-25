@@ -1,8 +1,11 @@
 # Example 1: With provided mask (original behavior)
 python run.py -p test -c config/dem_completion.json \
-  --resume_state ./pretrained/5 \
-  --n_timestep 100 \
-  --input_img "/workspace/shared/dem-fill/test/11-2-25-test.tif" \
+  --resume_state pretrained/100 \
+  --n_timestep 500 \
+  --input_img "test/14-small-1.tif" \
+  --tile_overlap 12 \
+  --gpu_ids 0 \
+  --batch 12
 
 # Example 2: With auto-generated mask (new behavior - mask optional)
 # python run.py -p test -c config/dem_completion.json \
