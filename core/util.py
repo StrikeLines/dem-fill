@@ -130,6 +130,11 @@ class GeoTiffTiler:
         Returns:
             Dictionary with tiling metadata
         """
+        # Initialize counters for tile statistics
+        total_tiles = 0
+        mixed_tiles = 0
+        nodata_only_tiles = 0
+        valid_only_tiles = 0
         os.makedirs(output_dir, exist_ok=True)
         
         with rasterio.open(input_path) as src:
@@ -193,6 +198,26 @@ class GeoTiffTiler:
                     window = Window(x_start, y_start, actual_width, actual_height)
                     tile_data = src.read(window=window)
                     
+                    # Check tile content if nodata value is defined
+                    if nodata is not None:
+                        nodata_mask = tile_data == nodata
+                        nodata_pixels = np.sum(nodata_mask)
+                        total_pixels = tile_data.size
+                        valid_pixels = total_pixels - nodata_pixels
+                        
+                        # Skip tiles with only nodata or only valid pixels
+                        if nodata_pixels == total_pixels:
+                            nodata_only_tiles += 1
+                            print(f"Tile {row:04d}_{col:04d}: Skipping - contains only nodata pixels")
+                            continue
+                        elif valid_pixels == total_pixels:
+                            valid_only_tiles += 1
+                            print(f"Tile {row:04d}_{col:04d}: Skipping - contains only valid pixels")
+                            continue
+                        else:
+                            mixed_tiles += 1
+                            print(f"Tile {row:04d}_{col:04d}: Keeping - contains both valid and nodata pixels")
+                    
                     # Create padded tile if necessary
                     if actual_width < self.tile_size or actual_height < self.tile_size:
                         # Create padded tile using edge extension instead of nodata
@@ -253,7 +278,19 @@ class GeoTiffTiler:
                     metadata['tiles'].append(tile_info)
                     
                     if (row * tiles_x + col + 1) % 50 == 0:
-                        print(f"Processed {row * tiles_x + col + 1}/{tiles_x * tiles_y} tiles")
+                        print(f"\nProgress: {row * tiles_x + col + 1}/{tiles_x * tiles_y} tiles")
+                        print(f"Current stats:")
+                        print(f"  - Mixed content (kept): {mixed_tiles}")
+                        print(f"  - Only nodata (deleted): {nodata_only_tiles}")
+                        print(f"  - Only valid data (deleted): {valid_only_tiles}\n")
+        
+        # Print final statistics
+        total_tiles = nodata_only_tiles + valid_only_tiles + mixed_tiles
+        print(f"\nTile Validation Results:")
+        print(f"Total tiles processed: {total_tiles}")
+        print(f"Tiles with mixed content (kept): {mixed_tiles}")
+        print(f"Tiles with only nodata (skipped): {nodata_only_tiles}")
+        print(f"Tiles with only valid data (skipped): {valid_only_tiles}")
         
         self.tiles_dir = output_dir
         return metadata
@@ -267,6 +304,11 @@ class GeoTiffTiler:
         prefix_mask: str = "mask",
         nodata_value: float = None
     ) -> Tuple[Dict, Dict]:
+        # Initialize counters for tile statistics
+        total_tiles = 0
+        mixed_tiles = 0
+        nodata_only_tiles = 0
+        valid_only_tiles = 0
         """
         Tile a georeferenced DEM into image and mask tiles.
         Automatically detects or uses user-provided NoData value.
@@ -376,10 +418,31 @@ class GeoTiffTiler:
                         # print(f"noData is not None: {nodata}")
 
                         mask = np.where(tile_data == nodata, 255, 0).astype(np.uint8)[0]
-                        tile_data = np.where(tile_data == nodata, 0, tile_data)
+                        
+                        # Check tile content
+                        nodata_pixels = np.sum(mask == 255)
+                        total_pixels = mask.size
+                        valid_pixels = total_pixels - nodata_pixels
+                        
+                        # Skip tiles with only nodata or only valid pixels
+                        if nodata_pixels == total_pixels:
+                            nodata_only_tiles += 1
+                            print(f"Tile {row:04d}_{col:04d}: Skipping - contains only nodata pixels")
+                            os.remove(tile_path)  # Delete the tile
+                            continue
+                        elif valid_pixels == total_pixels:
+                            valid_only_tiles += 1
+                            print(f"Tile {row:04d}_{col:04d}: Skipping - contains only valid pixels")
+                            os.remove(tile_path)  # Delete the tile
+                            continue
+                        else:
+                            mixed_tiles += 1
+                            print(f"Tile {row:04d}_{col:04d}: Keeping - contains both valid and nodata pixels")
+                            tile_data = np.where(tile_data == nodata, 0, tile_data)
                     else:
                         print("noData is None making all zeros mask")
                         mask = np.zeros((self.tile_size, self.tile_size), dtype=np.uint8)
+                        mixed_tiles += 1  # Count as mixed when no nodata value is specified
 
                     # Compute geotransform
                     left, top = transform * (x_start, y_start)
@@ -439,9 +502,22 @@ class GeoTiffTiler:
                     })
 
                     if (row * tiles_x + col + 1) % 50 == 0:
-                        print(f"Processed {row * tiles_x + col + 1}/{tiles_x * tiles_y} tiles")
+                        print(f"\nProgress: {row * tiles_x + col + 1}/{tiles_x * tiles_y} tiles")
+                        print(f"Current stats:")
+                        print(f"  - Mixed content (kept): {mixed_tiles}")
+                        print(f"  - Only nodata (deleted): {nodata_only_tiles}")
+                        print(f"  - Only valid data (deleted): {valid_only_tiles}\n")
 
-        print(f"✅ Done: {len(tile_metadata['tiles'])} tiles written to {tiles_dir} and {masks_dir}")
+        # Update total tiles count
+        total_tiles = nodata_only_tiles + valid_only_tiles + mixed_tiles
+        
+        # Print debug messages
+        print(f"\nTile Validation Results:")
+        print(f"Total tiles processed: {total_tiles}")
+        print(f"Tiles with mixed content (kept): {mixed_tiles}")
+        print(f"Tiles with only nodata (deleted): {nodata_only_tiles}")
+        print(f"Tiles with only valid data (deleted): {valid_only_tiles}")
+        print(f"✅ Done: {mixed_tiles} tiles written to {tiles_dir} and {masks_dir}")
         return tile_metadata, mask_metadata
 
     def merge_tiles(self, tiles_dir: str, metadata: Dict, output_path: str, 
